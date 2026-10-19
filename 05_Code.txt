@@ -1,0 +1,447 @@
+
+
+------------------------------------------------------------------------------
+Section 5.1  Setting up Azure ML workspace and environment
+Code block 5.1
+------------------------------------------------------------------------------
+from azure.ai.ml import MLClient
+from azure.ai.ml.entities import Workspace
+from azure.identity import DefaultAzureCredential
+
+credential = DefaultAzureCredential()
+ml_client = MLClient(credential, "<subscription-id>", "<resource-group>")
+
+workspace = Workspace(
+    name="mlw-enterprise-prod",
+    location="eastus",
+    display_name="Enterprise production ML workspace",
+    key_vault="/subscriptions/<sub-id>/resourceGroups/<rg>"
+              "/providers/Microsoft.KeyVault/vaults/<kv-name>",
+    system_datastores_auth_mode="identity",
+    public_network_access="Disabled",
+    tags={"environment": "prod", "owner": "ml-platform"}
+)
+
+created = ml_client.workspaces.begin_create(workspace).result()
+print(f"Workspace provisioned: {created.name}")
+
+
+------------------------------------------------------------------------------
+Section 5.2  Connecting Azure Databricks for big data processing
+Code block 5.2
+------------------------------------------------------------------------------
+from azure.ai.ml import MLClient
+from azure.keyvault.secrets import SecretClient
+from azure.identity import DefaultAzureCredential
+from databricks.sdk import WorkspaceClient
+
+credential = DefaultAzureCredential()
+ml_client = MLClient(
+    credential=credential,
+    subscription_id="<your-subscription-id>",
+    resource_group_name="<your-resource-group>",
+    workspace_name="<your-workspace-name>"
+)
+
+# Fetch the Databricks PAT from Key Vault so it never appears in source
+secrets = SecretClient(
+    vault_url="https://<your-key-vault>.vault.azure.net", credential=credential
+)
+databricks_pat = secrets.get_secret("adb-pat").value
+w = WorkspaceClient(
+    host="https://<adb-ws>.azuredatabricks.net", token=databricks_pat
+)
+
+run = w.jobs.run_now(job_id=<your-databricks-job-id>).result()
+print(f"Databricks job finished: {run.state.result_state}")
+
+
+------------------------------------------------------------------------------
+Section 5.4  Building models with AutoML and custom Python code
+Code block 5.4 [1 of 2]
+------------------------------------------------------------------------------
+from azure.ai.ml import MLClient, automl, Input
+from azure.ai.ml.constants import AssetTypes
+from azure.identity import DefaultAzureCredential
+
+credential = DefaultAzureCredential()
+ml_client = MLClient(
+    credential=credential,
+    subscription_id="<subscription-id>",
+    resource_group_name="<resource-group>",
+    workspace_name="<workspace-name>"
+)
+
+training_data = Input(
+    type=AssetTypes.MLTABLE,
+    path="azureml:customer-churn-train:1"
+)
+
+classification_job = automl.classification(
+    compute="cpu-cluster-4x",
+    experiment_name="churn-automl-experiment",
+    training_data=training_data,
+    target_column_name="churn_flag",
+    primary_metric="AUC_weighted",
+    n_cross_validations=5,
+    enable_model_explainability=True,
+    tags={"project": "churn-prediction", "environment": "dev"}
+)
+
+classification_job.set_limits(
+    timeout_minutes=120,
+    trial_timeout_minutes=20,
+    max_trials=30,
+    max_concurrent_trials=6
+)
+
+returned_job = ml_client.jobs.create_or_update(classification_job)
+print(f"AutoML job submitted: {returned_job.name}")
+
+
+------------------------------------------------------------------------------
+Section 5.4  Building models with AutoML and custom Python code
+Code block 5.4 [2 of 2]
+------------------------------------------------------------------------------
+# train.py
+import argparse
+import mlflow
+import mlflow.pytorch
+import torch
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data", type=str)
+    parser.add_argument("--learning-rate", type=float, default=0.001)
+    parser.add_argument("--epochs", type=int, default=50)
+    return parser.parse_args()
+
+def main():
+    args = parse_args()
+    mlflow.autolog()
+    mlflow.log_param("learning_rate", args.learning_rate)
+    mlflow.log_param("epochs", args.epochs)
+
+    for epoch in range(args.epochs):
+        # Replace with real training loop
+        train_loss = 0.5 * (0.98 ** epoch)
+        mlflow.log_metric("train_loss", train_loss, step=epoch)
+
+    model = torch.nn.Linear(64, 1)
+    mlflow.pytorch.log_model(model, "model")
+    # no end_run(): the AML command job owns the enclosing MLflow run
+
+if __name__ == "__main__":
+    main()
+
+
+------------------------------------------------------------------------------
+Section 5.5  Training at scale with compute clusters
+Code block 5.5
+------------------------------------------------------------------------------
+from azure.ai.ml import MLClient
+from azure.ai.ml.entities import AmlCompute, NetworkSettings
+from azure.identity import DefaultAzureCredential
+
+credential = DefaultAzureCredential()
+ml_client = MLClient(
+    credential=credential,
+    subscription_id="<subscription-id>",
+    resource_group_name="<resource-group>",
+    workspace_name="<workspace-name>"
+)
+
+gpu_cluster = AmlCompute(
+    name="gpu-cluster-a100",
+    type="amlcompute",
+    size="Standard_ND96asr_v4",
+    min_instances=0,
+    max_instances=8,
+    idle_time_before_scale_down=180,
+    tier="Dedicated",
+    enable_node_public_ip=False,
+    network_settings=NetworkSettings(subnet="/subscriptions/.../subnets/snet-ml-training")
+)
+
+ml_client.compute.begin_create_or_update(gpu_cluster).result()
+print("GPU compute cluster provisioned.")
+
+
+------------------------------------------------------------------------------
+Section 5.6  Model deployment and monitoring
+Code block 5.6 [1 of 2]
+------------------------------------------------------------------------------
+from azure.ai.ml import MLClient
+from azure.ai.ml.entities import (
+    ManagedOnlineEndpoint, ManagedOnlineDeployment, CodeConfiguration
+)
+from azure.identity import DefaultAzureCredential
+
+credential = DefaultAzureCredential()
+ml_client = MLClient(
+    credential=credential,
+    subscription_id="<subscription-id>",
+    resource_group_name="<resource-group>",
+    workspace_name="<workspace-name>"
+)
+
+# Create the endpoint resource
+endpoint = ManagedOnlineEndpoint(
+    name="churn-prediction-endpoint",
+    description="Production churn prediction endpoint",
+    auth_mode="key",
+    tags={"project": "churn", "environment": "prod"}
+)
+ml_client.online_endpoints.begin_create_or_update(endpoint).result()
+
+# Create the deployment under the endpoint
+deployment = ManagedOnlineDeployment(
+    name="churn-v1",
+    endpoint_name="churn-prediction-endpoint",
+    model="azureml:churn-model:3",
+    code_configuration=CodeConfiguration(
+        code="./inference",
+        scoring_script="score.py"
+    ),
+    environment="azureml:sklearn-inference:1",
+    instance_type="Standard_DS3_v2",
+    instance_count=2
+)
+ml_client.online_deployments.begin_create_or_update(deployment).result()
+
+# Re-fetch first so concurrent changes are not clobbered, then shift traffic
+endpoint = ml_client.online_endpoints.get("churn-prediction-endpoint")
+ml_client.online_endpoints.begin_create_or_update(endpoint).result()
+print("Model deployed and traffic routed.")  # canary: {"churn-v1": 90, "churn-v2": 10}
+
+
+------------------------------------------------------------------------------
+Section 5.6  Model deployment and monitoring
+Code block 5.6 [2 of 2]
+------------------------------------------------------------------------------
+# score.py
+import json, os
+import joblib
+import numpy as np
+
+model = None
+
+def init():
+    global model
+    model_path = os.path.join(os.environ["AZUREML_MODEL_DIR"], "model.pkl")
+    model = joblib.load(model_path)
+
+def run(raw_data):
+    try:
+        data = json.loads(raw_data)
+        features = np.array(data["features"])
+        predictions = model.predict(features)
+        return {"predictions": predictions.tolist()}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+------------------------------------------------------------------------------
+Section 5.8  Data preparation and feature engineering at scale
+Code block 5.8
+------------------------------------------------------------------------------
+from sagemaker.processing import ScriptProcessor, ProcessingInput, ProcessingOutput
+from sagemaker import get_execution_role, image_uris
+import sagemaker
+
+session = sagemaker.Session()
+role = get_execution_role()
+region = session.boto_region_name
+
+processor = ScriptProcessor(
+    image_uri=image_uris.retrieve(framework="sklearn", region=region, version="1.2-1"),
+    instance_type="ml.m5.4xlarge",
+    instance_count=4,
+    command=["python3"],
+    role=role,
+    volume_size_in_gb=100
+)
+
+processor.run(
+    code="feature_engineering.py",
+    inputs=[
+        ProcessingInput(
+            source="s3://your-bucket/raw-data/",
+            destination="/opt/ml/processing/input",
+            s3_data_distribution_type="ShardedByS3Key"
+        )
+    ],
+    outputs=[
+        ProcessingOutput(
+            output_name="train",
+            source="/opt/ml/processing/output/train",
+            destination="s3://your-bucket/processed/train/"
+        ),
+        ProcessingOutput(
+            output_name="test",
+            source="/opt/ml/processing/output/test",
+            destination="s3://your-bucket/processed/test/"
+        )
+    ],
+    arguments=["--train-split", "0.8", "--target-col", "churn_flag"]
+)
+print("Feature engineering job submitted.")
+
+
+------------------------------------------------------------------------------
+Section 5.9  Training jobs and distributed training at scale
+Code block 5.9
+------------------------------------------------------------------------------
+import sagemaker
+from sagemaker.pytorch import PyTorch
+from sagemaker import get_execution_role
+
+session = sagemaker.Session()
+role = get_execution_role()
+
+estimator = PyTorch(
+    entry_point="train_distributed.py",
+    source_dir="./src",
+    role=role,
+    instance_type="ml.p4d.24xlarge",
+    instance_count=4,
+    framework_version="2.0",
+    py_version="py310",
+    distribution={
+        "smdistributed": {
+            "dataparallel": {
+                "enabled": True,
+                    # mixed precision is set in the training script, not here
+            }
+        }
+    },
+    hyperparameters={
+        "epochs": 100,
+        "batch-size": 256,
+        "learning-rate": 0.001
+    },
+    output_path="s3://your-bucket/model-artifacts/",
+    checkpoint_s3_uri="s3://your-bucket/checkpoints/",
+    use_spot_instances=True,
+    max_wait=86400
+)
+
+estimator.fit({
+    "train": "s3://your-bucket/processed/train/",
+    "validation": "s3://your-bucket/processed/validation/"
+})
+print("Distributed training job completed.")
+
+
+------------------------------------------------------------------------------
+Section 5.10  Model monitoring, drift detection, and automated retraining
+Code block 5.10
+------------------------------------------------------------------------------
+from sagemaker.model_monitor import DefaultModelMonitor, DataCaptureConfig
+from sagemaker.model_monitor.dataset_format import DatasetFormat
+import sagemaker
+
+session = sagemaker.Session()
+
+# Data capture must be enabled ON the endpoint itself, not just constructed
+data_capture_config = DataCaptureConfig(
+    enable_capture=True,
+    sampling_percentage=20,
+    destination_s3_uri="s3://your-bucket/capture/",
+    capture_options=["REQUEST", "RESPONSE"]
+)
+
+predictor.update_data_capture_config(data_capture_config=data_capture_config)
+monitor = DefaultModelMonitor(
+    role=sagemaker.get_execution_role(),
+    instance_count=1,
+    instance_type="ml.m5.xlarge",
+    volume_size_in_gb=20,
+    max_runtime_in_seconds=3600
+)
+
+monitor.suggest_baseline(
+    baseline_dataset="s3://your-bucket/processed/train/features.csv",
+    dataset_format=DatasetFormat.csv(header=True),
+    output_s3_uri="s3://your-bucket/baseline/",
+    wait=True
+)
+
+# Schedule hourly monitoring
+monitor.create_monitoring_schedule(
+    monitor_schedule_name="churn-model-monitor",
+    endpoint_input="churn-prediction-endpoint",
+    output_s3_uri="s3://your-bucket/monitor-output/",
+    statistics=monitor.baseline_statistics(),
+    constraints=monitor.suggested_constraints(),
+    schedule_cron_expression="cron(0 * ? * * *)"
+)
+print("Model monitor scheduled.")
+
+
+------------------------------------------------------------------------------
+Section 5.13  Advanced patterns for agentic AI
+Code block 5.13
+------------------------------------------------------------------------------
+# rag_agent.py
+from langchain_openai import AzureChatOpenAI  # langchain-openai 0.2.x
+from langchain_openai import AzureOpenAIEmbeddings
+from langchain_community.vectorstores import AzureSearch
+from langchain.chains import create_retrieval_chain
+from langchain.prompts import PromptTemplate
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+
+import os
+
+token_provider = get_bearer_token_provider(
+    DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default"
+)
+
+# Initialize Azure OpenAI LLM endpoint
+llm = AzureChatOpenAI(
+    azure_deployment=os.environ["AZURE_OPENAI_DEPLOYMENT"],
+    azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
+    azure_ad_token_provider=token_provider,
+    api_version="2024-02-01",
+    temperature=0.0,
+    max_tokens=1024
+)
+
+# Initialize embedding model for document retrieval
+embeddings = AzureOpenAIEmbeddings(
+    azure_deployment="text-embedding-ada-002",
+    azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
+    azure_ad_token_provider=token_provider
+)
+
+# Connect to Azure Cognitive Search vector store
+vector_store = AzureSearch(
+    azure_search_endpoint=os.environ["AZURE_SEARCH_ENDPOINT"],
+    credential=DefaultAzureCredential(),
+    index_name="enterprise-knowledge-base",
+    embedding_function=embeddings.embed_query
+)
+
+# Define the RAG prompt template
+prompt_template = """Use the context below to answer the question.
+If the answer is not in the context, say you do not have enough information.
+Context: {context}
+Question: {question}
+Answer:"""
+
+prompt = PromptTemplate(
+    template=prompt_template,
+    input_variables=["context", "question"]
+)
+
+# Assemble the RAG chain
+rag_chain = RetrievalQA.from_chain_type(
+    llm=llm,
+    chain_type="stuff",
+    retriever=vector_store.as_retriever(search_kwargs={"k": 5}),
+    chain_type_kwargs={"prompt": prompt},
+    return_source_documents=True
+)
+
+result = rag_chain({"query": "What is the refund policy for enterprise customers?"})
+print(result["result"])

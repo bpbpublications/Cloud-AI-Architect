@@ -1,0 +1,37 @@
+
+------------------------------------------------------------------------------
+Section 11.2.1  TCO calculator
+Code block 11.2.1
+------------------------------------------------------------------------------
+def estimate_monthly_cost(requests_per_day, cost_per_1k_requests,
+                          gb_transferred, transfer_cost_per_gb,
+                          storage_gb, storage_cost_per_gb,
+                          operations_cost):
+    compute = (requests_per_day * 30 / 1000) * cost_per_1k_requests
+    transfer = gb_transferred * transfer_cost_per_gb
+    storage = storage_gb * storage_cost_per_gb
+    total = compute + transfer + storage + operations_cost
+    return {'compute': compute, 'transfer': transfer,
+            'storage': storage, 'operations': operations_cost,
+            'total': total}
+
+
+------------------------------------------------------------------------------
+Section 11.7  Building a custom benchmarking toolkit
+Code block 11.7
+------------------------------------------------------------------------------
+import math
+import time
+import statistics
+
+def measure_latency(call_platform, num_requests=1000):
+    latencies = []
+    for _ in range(num_requests):
+        start = time.perf_counter()
+        call_platform()
+        latencies.append((time.perf_counter() - start) * 1000)
+    latencies.sort()
+    return {'p50': statistics.median(latencies),
+
+            'p95': latencies[math.ceil(0.95 * len(latencies)) - 1],
+            'p99': latencies[math.ceil(0.99 * len(latencies)) - 1]}

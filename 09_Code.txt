@@ -1,0 +1,105 @@
+
+
+------------------------------------------------------------------------------
+Section 9.2.1  Handling seasonality, trends, and regressors
+Code block 9.2.1
+------------------------------------------------------------------------------
+import pandas as pd
+from statsmodels.tsa.seasonal import seasonal_decompose
+
+series = pd.read_csv('sales.csv', index_col='date', parse_dates=True)
+# seasonal_decompose raises on missing values, so make the index
+# regular and close any gaps before decomposing.
+series = series.asfreq('MS').interpolate()
+result = seasonal_decompose(series['units'], model='additive', period=12)
+
+trend = result.trend
+seasonal = result.seasonal
+residual = result.resid
+print(seasonal.head(12))
+
+
+------------------------------------------------------------------------------
+Section 9.3  Building classical forecasting models
+Code block 9.3
+------------------------------------------------------------------------------
+from prophet import Prophet
+import pandas as pd
+
+df = pd.read_csv('sales.csv')
+df = df.rename(columns={'date': 'ds', 'units': 'y'})
+
+model = Prophet(yearly_seasonality=True, weekly_seasonality=True)
+# Holidays are not added by default: supply a calendar explicitly.
+model.add_country_holidays(country_name='US')
+model.fit(df)
+
+future = model.make_future_dataframe(periods=90)
+forecast = model.predict(future)
+print(forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].tail())
+
+
+------------------------------------------------------------------------------
+Section 9.3.1  Backtesting and rolling-origin evaluation
+Code block 9.3.1
+------------------------------------------------------------------------------
+from prophet.diagnostics import cross_validation, performance_metrics
+
+# initial: history used for the first fit. period: gap between cutoffs.
+# horizon: how far ahead each fold forecasts.
+cv = cross_validation(model, initial='730 days',
+                      period='90 days', horizon='90 days')
+print(performance_metrics(cv)[['horizon', 'mae', 'mape']].head())
+
+
+------------------------------------------------------------------------------
+Section 9.4  Deep learning forecasting with TensorFlow
+Code block 9.4
+------------------------------------------------------------------------------
+import numpy as np
+import tensorflow as tf
+from sklearn.preprocessing import MinMaxScaler
+
+# 1. Split by time, never randomly.
+window_size = 30
+split = int(len(series) * 0.8)
+train_series = series[:split]
+
+# 2. Fit the scaler on training data only, or future values leak in.
+scaler = MinMaxScaler()
+scaler.fit(train_series.values.reshape(-1, 1))
+scaled = scaler.transform(series.values.reshape(-1, 1)).flatten()
+
+# 3. Turn the series into the supervised windows the model trains on.
+def make_windows(values, window):
+    X = [values[i:i + window] for i in range(len(values) - window)]
+    y = [values[i + window] for i in range(len(values) - window)]
+    return np.array(X)[..., None], np.array(y)
+
+train_x, train_y = make_windows(scaled[:split], window_size)
+
+model = tf.keras.Sequential([
+    tf.keras.layers.LSTM(64, input_shape=(window_size, 1)),
+    tf.keras.layers.Dense(32, activation='relu'),
+    tf.keras.layers.Dense(1)
+])
+
+model.compile(optimizer='adam', loss='mae')
+model.fit(train_x, train_y, epochs=20, validation_split=0.1)
+
+
+------------------------------------------------------------------------------
+Section 9.5  BigQuery ML for serverless forecasting
+Code block 9.5
+------------------------------------------------------------------------------
+CREATE OR REPLACE MODEL sales.demand_forecast
+OPTIONS(model_type='ARIMA_PLUS',
+        time_series_timestamp_col='order_date',
+        time_series_data_col='units_sold',
+        -- one independent model per product, in a single statement
+        time_series_id_col='product_id',
+        holiday_region='US') AS
+SELECT order_date, units_sold FROM sales.daily_orders;
+
+SELECT * FROM ML.FORECAST(MODEL sales.demand_forecast,
+                          STRUCT(30 AS horizon, 0.9 AS confidence_level));

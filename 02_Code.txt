@@ -1,0 +1,23 @@
+
+
+------------------------------------------------------------------------------
+Section 2.4.1  Policy as code implementation
+Code block 2.4.1 [1 of 2]
+------------------------------------------------------------------------------
+package terraform.training
+
+deny[msg] {
+    resource := input.resource_changes[_]
+    resource.type == "aws_s3_bucket"
+    resource.change.after.tags.workload == "training"
+    not resource.change.after.server_side_encryption_configuration
+    msg := sprintf("Training bucket %v must enable encryption at rest", [resource.address])
+}
+
+
+------------------------------------------------------------------------------
+Section 2.4.1  Policy as code implementation
+Code block 2.4.1 [2 of 2]
+------------------------------------------------------------------------------
+terraform show -json tfplan.binary > tfplan.json
+conftest test --policy policies/ tfplan.json

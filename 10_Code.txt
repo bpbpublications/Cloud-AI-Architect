@@ -1,0 +1,36 @@
+
+------------------------------------------------------------------------------
+Section 10.3  AWS Textract for document processing
+Code block 10.3
+------------------------------------------------------------------------------
+import boto3
+from trp import Document
+
+textract = boto3.client('textract', region_name='us-east-1')
+
+response = textract.analyze_document(
+    Document={'S3Object': {'Bucket': 'enterprise-docs', 'Name': 'invoice.pdf'}},
+    FeatureTypes=['FORMS', 'TABLES']
+)
+
+doc = Document(response)
+for page in doc.pages:
+    for field in page.form.fields:
+        print(field.key.text, field.value.text, field.value.confidence)
+
+
+------------------------------------------------------------------------------
+Section 10.8  REST API integration patterns
+Code block 10.8
+------------------------------------------------------------------------------
+import os
+import requests
+
+url = 'https://api.example.com/v1/analyze'
+headers = {'Authorization': f"Bearer {os.environ['API_KEY']}",
+           'Content-Type': 'application/json'}
+payload = {'text': 'The delivery arrived a day late.'}
+
+response = requests.post(url, headers=headers, json=payload)
+result = response.json()
+print(result['sentiment'], result['confidence'])

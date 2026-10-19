@@ -1,0 +1,40 @@
+
+
+------------------------------------------------------------------------------
+Section 3.10.2  Anomaly detection for cost and performance
+Code block 3.10.2
+------------------------------------------------------------------------------
+from prophet import Prophet
+import pandas as pd
+
+# Load historical daily cost data
+# DataFrame must have columns: 'ds' (date) and 'y' (cost)
+df = pd.read_csv('daily_gpu_costs.csv')
+df['ds'] = pd.to_datetime(df['ds'])
+
+# Fit the Prophet model with daily and weekly seasonality
+model = Prophet(
+    daily_seasonality=True,
+    weekly_seasonality=True,
+    interval_width=0.95  # 95% confidence interval
+)
+model.fit(df)
+
+# Create forecast for the next 7 days
+future = model.make_future_dataframe(periods=7)
+forecast = model.predict(future)
+
+# Identify anomalies: actual values outside confidence interval
+merged = df.merge(
+    forecast[['ds', 'yhat_lower', 'yhat_upper']],
+    on='ds', how='left'
+)
+merged['is_anomaly'] = (
+    (merged['y'] > merged['yhat_upper']) |
+    (merged['y'] < merged['yhat_lower'])
+)
+anomalies = merged[merged['is_anomaly']]
+print(f'Detected {len(anomalies)} cost anomalies')
+for _, row in anomalies.iterrows():
+    print(f"  {row['ds'].date()}: Actual=${row['y']:.2f}, "
+          f"Expected=[${row['yhat_lower']:.2f}, ${row['yhat_upper']:.2f}]")

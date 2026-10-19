@@ -1,0 +1,60 @@
+
+
+------------------------------------------------------------------------------
+Section 7.2  AWS Rekognition for visual analysis
+Code block 7.2
+------------------------------------------------------------------------------
+import boto3
+
+rekognition = boto3.client('rekognition', region_name='us-east-1')
+
+response = rekognition.detect_labels(
+    Image={'S3Object': {'Bucket': 'enterprise-vision', 'Name': 'shelf.jpg'}},
+    MaxLabels=10,
+    MinConfidence=80
+)
+
+for label in response['Labels']:
+    print(label['Name'], round(label['Confidence'], 1))
+
+
+------------------------------------------------------------------------------
+Section 7.3  Google Vision AI for documents
+Code block 7.3
+------------------------------------------------------------------------------
+from google.cloud import documentai_v1 as documentai
+
+client = documentai.DocumentProcessorServiceClient()
+name = client.processor_path('project', 'us', 'invoice-processor-id')
+
+with open('invoice.pdf', 'rb') as f:
+    raw = documentai.RawDocument(content=f.read(),
+                                 mime_type='application/pdf')
+
+result = client.process_document(
+    request=documentai.ProcessRequest(name=name, raw_document=raw))
+
+for entity in result.document.entities:
+    print(entity.type_, entity.mention_text)
+
+
+------------------------------------------------------------------------------
+Section 7.4.1  Workflow orchestration using Step Functions
+Code block 7.4.1
+------------------------------------------------------------------------------
+{
+  "StartAt": "ExtractText",
+  "States": {
+    "ExtractText": { "Type": "Task", "Next": "RouteByConfidence" },
+    "RouteByConfidence": {
+      "Type": "Choice",
+      "Choices": [
+        { "Variable": "$.confidence", "NumericGreaterThan": 0.95,
+          "Next": "AutoClear" },
+        { "Variable": "$.confidence", "NumericLessThan": 0.70,
+          "Next": "HumanReview" }
+      ],
+      "Default": "HoldForCheck"
+    }
+  }
+}

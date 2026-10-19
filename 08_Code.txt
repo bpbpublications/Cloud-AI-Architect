@@ -1,0 +1,62 @@
+
+
+------------------------------------------------------------------------------
+Section 8.2  AWS Comprehend language understanding
+Code block 8.2
+------------------------------------------------------------------------------
+import boto3
+
+comprehend = boto3.client('comprehend', region_name='us-east-1')
+text = 'My new account was charged twice and support never replied.'
+
+sentiment = comprehend.detect_sentiment(Text=text, LanguageCode='en')
+entities = comprehend.detect_entities(Text=text, LanguageCode='en')
+
+print('Sentiment:', sentiment['Sentiment'])
+for e in entities['Entities']:
+    print(e['Type'], e['Text'], round(e['Score'], 2))
+
+
+------------------------------------------------------------------------------
+Section 8.3  Azure cognitive language platform
+Code block 8.3
+------------------------------------------------------------------------------
+from azure.ai.textanalytics import TextAnalyticsClient
+from azure.core.credentials import AzureKeyCredential
+
+client = TextAnalyticsClient(endpoint=ENDPOINT,
+                             credential=AzureKeyCredential(KEY))
+docs = ['The delivery was late but the staff were very helpful.']
+
+sentiment = client.analyze_sentiment(documents=docs)[0]
+entities = client.recognize_entities(documents=docs)[0]
+
+print('Sentiment:', sentiment.sentiment)
+for e in entities.entities:
+    print(e.category, e.text)
+
+
+------------------------------------------------------------------------------
+Section 8.4  Building custom NLP with Python
+Code block 8.4
+------------------------------------------------------------------------------
+from transformers import pipeline
+
+classifier = pipeline('text-classification',
+                      model='distilbert-base-uncased-finetuned-sst-2-english')
+
+result = classifier('The onboarding process was confusing and slow.')
+print(result[0]['label'], round(result[0]['score'], 3))
+
+
+------------------------------------------------------------------------------
+Section 8.6  Conversational AI and intelligent agents
+Code block 8.6
+------------------------------------------------------------------------------
+def handle_turn(user_message, knowledge_base):
+    passages = knowledge_base.search(user_message, top_k=3)
+    context = '\n'.join(p.text for p in passages)
+    prompt = (f'Answer using only the context below.\n'
+              f'Context:\n{context}\n\nQuestion: {user_message}')
+    answer = language_model.generate(prompt)
+    return answer, [p.source for p in passages]
